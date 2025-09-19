@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+build/
+.vite/
+.npm/
+pnpm-lock.yaml
+yarn.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Otros
+coverage/
