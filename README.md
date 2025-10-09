@@ -9,7 +9,7 @@ Sistema de encuestas para docentes desarrollado con FastAPI y PostgreSQL.
 - **Autenticación** de usuarios
 - **Gestión de encuestas** y docentes
 - **Migraciones** con Alembic
-- **Docker** para desarrollo
+- **Supabase** para desarrollo
 
 ## 📁 Estructura del Proyecto
 
@@ -36,7 +36,7 @@ encuesta-docente/
 ### Requisitos
 
 - Python 3.11+
-- Docker y Docker Compose
+- Supabase
 - Git
 
 ### Pasos
@@ -109,4 +109,4 @@ black .
 
 ## 📝 Licencia
 
-Este proyecto está bajo la Licencia MIT.
+Este proyecto está bajo Licencia
