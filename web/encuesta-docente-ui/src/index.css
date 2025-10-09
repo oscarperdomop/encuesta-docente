@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Resets/base mínimos orientados a Tailwind */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-[#f8f5ef] text-gray-900 antialiased;
+  }
+  a {
+    @apply text-usco-primary hover:underline;
+  }
+}
+
+/* Utilidades de marca y helpers de UI */
+@layer components {
+  .shadow-card {
+    @apply bg-white rounded-2xl shadow-lg;
+  }
+
+  /* Botones consistentes (opcional) */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-xl font-medium;
+  }
+  .btn-primary {
+    @apply btn bg-usco-primary text-white hover:opacity-90 disabled:opacity-60;
+  }
+  .btn-ghost {
+    @apply btn bg-gray-100 hover:bg-gray-200;
+  }
+}

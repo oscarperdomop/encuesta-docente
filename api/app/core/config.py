@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # DB URLs (acepta cualquiera de las dos)
     DATABASE_URL: str | None = None
     SQLALCHEMY_DATABASE_URI: str | None = None
+    
 
     @property
     def db_url(self) -> str:
