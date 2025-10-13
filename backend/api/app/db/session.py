@@ -14,7 +14,7 @@ def _mask(u: str) -> str:
 print("[DB] Using:", _mask(DB_URI))
 
 engine = create_engine(
-    DB_URI,
+    settings.db_url,          # <— usa la propiedad unificada
     pool_pre_ping=True,
     poolclass=NullPool,                 # obligatorio con PgBouncer (pooler de Supabase)
     connect_args={"sslmode": "require"},  # redundante si ya va en la URL, pero seguro
