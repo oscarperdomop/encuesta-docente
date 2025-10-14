@@ -13,25 +13,39 @@ db_url = settings.db_url
 print(f"[DB] Using: {_mask(db_url)}")
 print(f"[DB] Connection type: {'POOLER' if 'pooler' in db_url.lower() else 'DIRECT'}")
 
-# Configuración para CONEXIÓN DIRECTA a Supabase
-engine = create_engine(
-    db_url,
-    # Pool settings optimizados para Render + Supabase
-    pool_size=5,              # 5 conexiones base
-    max_overflow=10,          # 10 conexiones extra en picos
-    pool_timeout=30,          # 30s timeout para obtener conexión
-    pool_recycle=300,         # Recicla conexiones cada 5 min
-    pool_pre_ping=True,       # Verifica conexión antes de usar
+# Configuración para Supabase (detecta si es pooler o directa)
+is_pooler = "pooler" in db_url.lower() or ":6543" in db_url
+
+if is_pooler:
+    # Usar NullPool para conexión con pooler (PgBouncer)
+    from sqlalchemy.pool import NullPool
     
-    # Connect args con timeouts
-    connect_args={
-        "connect_timeout": 10,
-        "options": "-c statement_timeout=30000"  # 30 segundos
-    },
-    
-    # Sin echo en producción
-    echo=False,
-)
+    engine = create_engine(
+        db_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": 10,
+        },
+        echo=False,
+    )
+    print("[DB] Using NullPool (Pooler/PgBouncer mode)")
+else:
+    # Usar pool normal para conexión directa
+    engine = create_engine(
+        db_url,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=300,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": 10,
+            "options": "-c statement_timeout=30000",
+        },
+        echo=False,
+    )
+    print("[DB] Using standard pool (Direct connection)")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
