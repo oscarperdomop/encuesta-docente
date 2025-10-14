@@ -8,7 +8,7 @@ ENV_FILE = API_DIR / ".env"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(ENV_FILE),
+        env_file=str(ENV_FILE), 
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

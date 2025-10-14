@@ -8,26 +8,28 @@ def _mask(u: str) -> str:
     """Enmascara la contraseña en la URL para logs seguros"""
     return re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", u)
 
-# Log de la URL enmascarada para debugging
+# Obtener URL y hacer logging
 db_url = settings.db_url
 print(f"[DB] Using: {_mask(db_url)}")
 print(f"[DB] Connection type: {'POOLER' if 'pooler' in db_url.lower() else 'DIRECT'}")
 
-# Configuración optimizada para CONEXIÓN DIRECTA a Supabase
-# Si usas pooler, el config.py lo convierte automáticamente a directa
+# Configuración para CONEXIÓN DIRECTA a Supabase
 engine = create_engine(
     db_url,
-    # Pool settings (para conexión directa)
-    pool_size=settings.DB_POOL_SIZE,              # 5 conexiones base
-    max_overflow=settings.DB_MAX_OVERFLOW,        # 10 conexiones extra en picos
-    pool_timeout=settings.DB_POOL_TIMEOUT,        # 30s timeout
-    pool_recycle=settings.DB_POOL_RECYCLE,        # Recicla cada 5 min
-    pool_pre_ping=settings.DB_POOL_PRE_PING,      # Verifica conexión antes de usar
+    # Pool settings optimizados para Render + Supabase
+    pool_size=5,              # 5 conexiones base
+    max_overflow=10,          # 10 conexiones extra en picos
+    pool_timeout=30,          # 30s timeout para obtener conexión
+    pool_recycle=300,         # Recicla conexiones cada 5 min
+    pool_pre_ping=True,       # Verifica conexión antes de usar
     
-    # Connect args (ya incluye sslmode y timeouts desde config.py)
-    connect_args=settings.db_connect_args,
+    # Connect args con timeouts
+    connect_args={
+        "connect_timeout": 10,
+        "options": "-c statement_timeout=30000"  # 30 segundos
+    },
     
-    # Echo SQL queries (útil para debugging, cambiar a False en producción)
+    # Sin echo en producción
     echo=False,
 )
 
@@ -43,12 +45,12 @@ def get_db():
         db.close()
 
 
-# Función opcional para verificar la conexión al inicio
 def check_db_connection():
     """Verifica que la conexión a la base de datos funcione"""
     try:
+        from sqlalchemy import text
         with engine.connect() as conn:
-            result = conn.execute("SELECT 1")
+            result = conn.execute(text("SELECT 1"))
             print("[DB] ✓ Connection successful")
             return True
     except Exception as e:
