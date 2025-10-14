@@ -1,22 +1,18 @@
-# app/db/session.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from app.core.config import settings
 import re
 
-DB_URI = settings.db_url  # <- usa SIEMPRE la propiedad unificada
-
-# Log sanitizado (sin exponer la contraseña)
 def _mask(u: str) -> str:
     return re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", u)
 
-print("[DB] Using:", _mask(DB_URI))
+print("[DB] Using:", _mask(settings.db_url))
 
 engine = create_engine(
-    settings.db_url,          # <— usa la propiedad unificada
+    settings.db_url,
     pool_pre_ping=True,
-    poolclass=NullPool,                 # obligatorio con PgBouncer (pooler de Supabase)
+    poolclass=NullPool,             # obligatorio con PgBouncer (pooler)
     connect_args={"sslmode": "require"},  # redundante si ya va en la URL, pero seguro
 )
 
