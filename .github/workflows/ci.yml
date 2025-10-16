@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: api
+        working-directory: ./backend/api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
