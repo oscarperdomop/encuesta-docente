@@ -1,25 +1,26 @@
-# encuesta-docente/api/app/api/v1/endpoints/attempts.py
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi import Response as FastAPIResponse
-from sqlalchemy import func, or_, and_, MetaData, Table, select
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.security import (
     get_current_user,
-    get_current_user_with_claims,  # si lo usas en otros lados; aquí no se usa
+    get_current_user_with_claims,  # si lo usas en otros lados
     get_admin_user,
 )
 from app.db.session import get_db
+from app.api.v1.endpoints.sessions import require_turno_open  # exige turno abierto
 from app.models.encuesta import Survey, Question, SurveySection
 from app.models.docente import Teacher, SurveyTeacherAssignment
 from app.models.attempt import Attempt, Response as AttemptResponse
-# ❌ IMPORTANTE: NO importamos AttemptLimit para evitar selects con columnas inexistentes
 from app.models.attempt_limit import AttemptLimit
+from app.models.turno import Turno
 from app.schemas.attempts import (
     AttemptsCreateIn,
     AttemptOut,
@@ -31,26 +32,14 @@ from app.schemas.attempts import (
 
 router = APIRouter(tags=["attempts"])
 
-# Producción: 30 min (en pruebas 1 min)
 ATTEMPT_TIMEOUT_MIN = 30
-# Base de sesiones permitidas por usuario x encuesta (si no hay fila en attempt_limits)
 BASE_MAX_SESSIONS = 2
-# Límite de docentes por creación en lote (no usado aquí, pero útil tenerlo)
 MAX_DOCENTES_POR_CREACION = 20
 
 
 # -------------------- helpers -------------------- #
 
-def _attempt_limits_table(db: Session) -> Table:
-    """Refleja la tabla attempt_limits EXACTAMENTE como está en BD."""
-    meta = MetaData()
-    return Table("attempt_limits", meta, autoload_with=db.get_bind())
-
 def _max_permitidos(db: Session, survey_id: UUID, user_id: UUID) -> int:
-    """
-    max_intentos + extra_otorgados desde attempt_limits.
-    Si no hay fila: base = BASE_MAX_SESSIONS.
-    """
     row = (
         db.query(AttemptLimit)
         .filter(AttemptLimit.survey_id == survey_id, AttemptLimit.user_id == user_id)
@@ -59,13 +48,6 @@ def _max_permitidos(db: Session, survey_id: UUID, user_id: UUID) -> int:
     base = row.max_intentos if row and row.max_intentos is not None else BASE_MAX_SESSIONS
     extra = row.extra_otorgados if row else 0
     return int(base) + int(extra)
-
-# Si tienes funciones duplicadas, deja un alias para evitar inconsistencias:
-def _get_max_sessions(db: Session, survey_id: UUID, user_id: UUID) -> int:
-    return _max_permitidos(db, survey_id, user_id)
-
-def _max_sessions_for_user(db: Session, survey_id: UUID, user_id: UUID) -> int:
-    return _max_permitidos(db, survey_id, user_id)
 
 def _extract_user_id(current) -> UUID:
     val = None
@@ -94,37 +76,6 @@ def _expire_stale_attempts(db: Session, survey_id: UUID, user_id: UUID) -> int:
         db.commit()
     return updated
 
-def _expire_if_token_rolled(db: Session, survey_id: UUID, user_id: UUID, token_iat: int | None) -> bool:
-    """
-    Si el usuario renovó sesión (nuevo JWT con iat más reciente) mientras había intentos EN_PROGRESO,
-    los expira para evitar reusar sesiones viejas.
-    """
-    if not token_iat:
-        return False
-    token_iat_dt = datetime.fromtimestamp(int(token_iat), tz=timezone.utc)
-    now = datetime.now(timezone.utc)
-
-    first_active = (
-        db.query(Attempt)
-        .filter(
-            Attempt.survey_id == survey_id,
-            Attempt.user_id == user_id,
-            Attempt.estado == "en_progreso",
-            or_(Attempt.expires_at.is_(None), Attempt.expires_at > now),
-        )
-        .order_by(Attempt.id.asc().nullslast())
-        .first()
-    )
-    if first_active and first_active.creado_en and token_iat_dt > first_active.creado_en:
-        db.query(Attempt).filter(
-            Attempt.survey_id == survey_id,
-            Attempt.user_id == user_id,
-            Attempt.estado == "en_progreso",
-        ).update({Attempt.estado: "expirado"}, synchronize_session=False)
-        db.commit()
-        return True
-    return False
-
 def _count_failures(db: Session, survey_id: UUID, user_id: UUID) -> int:
     return (
         db.query(func.count(Attempt.id))
@@ -137,7 +88,6 @@ def _count_failures(db: Session, survey_id: UUID, user_id: UUID) -> int:
     ) or 0
 
 def _active_session_nro(db: Session, survey_id: UUID, user_id: UUID, now: datetime) -> int | None:
-    """Devuelve el intento_nro de la sesión activa (en_progreso no expirada), si existe."""
     return db.query(func.max(Attempt.intento_nro)).filter(
         Attempt.survey_id == survey_id,
         Attempt.user_id == user_id,
@@ -146,7 +96,6 @@ def _active_session_nro(db: Session, survey_id: UUID, user_id: UUID, now: dateti
     ).scalar()
 
 def _max_session_nro(db: Session, survey_id: UUID, user_id: UUID) -> int:
-    """Máximo intento_nro histórico (0 si no hay)."""
     val = db.query(func.max(Attempt.intento_nro)).filter(
         Attempt.survey_id == survey_id,
         Attempt.user_id == user_id,
@@ -154,10 +103,6 @@ def _max_session_nro(db: Session, survey_id: UUID, user_id: UUID) -> int:
     return int(val or 0)
 
 def _count_used_sessions(db: Session, survey_id: UUID, user_id: UUID) -> int:
-    """
-    Cuenta SESIONES usadas (DISTINCT intento_nro) que terminaron en 'expirado' o 'fallido'.
-    Evita sobrecontar por cantidad de docentes en esa sesión.
-    """
     return int((
         db.query(func.count(func.distinct(Attempt.intento_nro)))
         .filter(
@@ -167,6 +112,33 @@ def _count_used_sessions(db: Session, survey_id: UUID, user_id: UUID) -> int:
         )
         .scalar()
     ) or 0)
+
+def _close_latest_open_turno_if_idle(db: Session, user_id: UUID, survey_id: UUID) -> None:
+    """
+    Si ya no quedan attempts en progreso para ese usuario/encuesta,
+    cierra el último turno 'open' del usuario.
+    """
+    now = datetime.now(timezone.utc)
+    still_open = db.query(Attempt.id).filter(
+        Attempt.user_id == user_id,
+        Attempt.survey_id == survey_id,
+        Attempt.estado == "en_progreso",
+        or_(Attempt.expires_at.is_(None), Attempt.expires_at > now),
+    ).first()
+    if still_open:
+        return  # aún hay algo en progreso; no se cierra
+
+    t = (
+        db.query(Turno)
+        .filter(Turno.user_id == user_id, Turno.status == "open")
+        .order_by(Turno.opened_at.desc())
+        .first()
+    )
+    if t:
+        t.status = "closed"
+        t.closed_at = func.now()
+        db.add(t)
+        db.commit()
 
 
 # -------------------- endpoints -------------------- #
@@ -178,11 +150,8 @@ def attempts_summary(
     current=Depends(get_current_user),
 ):
     user_id = _extract_user_id(current)
-
-    # 1) Expira intentos en_progreso que ya vencieron
     _expire_stale_attempts(db, survey_id, user_id)
 
-    # 2) Conteos por estado (para la UI)
     rows = (
         db.query(Attempt.estado, func.count(Attempt.id))
         .filter(Attempt.survey_id == survey_id, Attempt.user_id == user_id)
@@ -192,18 +161,13 @@ def attempts_summary(
     counts = {estado: n for estado, n in rows}
 
     now = datetime.now(timezone.utc)
-
-    # 3) Nro de sesión activa (si hay en_progreso vigente)
     intento_activo = _active_session_nro(db, survey_id, user_id, now)
     ultimo_intento = _max_session_nro(db, survey_id, user_id)
-
-    # 4) Sesiones usadas (expirado/fallido)
     used_sessions = _count_used_sessions(db, survey_id, user_id)
 
-    max_permitidos = _get_max_sessions(db, survey_id, user_id)
+    max_permitidos = _max_permitidos(db, survey_id, user_id)
     restantes = max(0, max_permitidos - used_sessions)
 
-    # 5) Vencimiento de la sesión abierta (para countdown en UI)
     open_exp = (
         db.query(func.max(Attempt.expires_at))
         .filter(
@@ -233,21 +197,16 @@ def attempts_summary(
         },
     }
 
-
 @router.get("/attempts/next", response_model=NextItemOut)
 def get_next(
     survey_id: UUID = Query(..., description="ID de la encuesta"),
     db: Session = Depends(get_db),
     current=Depends(get_current_user),
 ):
-    """Devuelve el attempt EN_PROGRESO que vence antes. Si no hay, 204."""
     user_id = _extract_user_id(current)
-
-    # Expirar los vencidos antes de decidir
     _expire_stale_attempts(db, survey_id, user_id)
 
     now = datetime.now(timezone.utc)
-
     row = (
         db.query(Attempt, Teacher.nombre.label("teacher_nombre"))
         .join(Teacher, Teacher.id == Attempt.teacher_id)
@@ -264,9 +223,8 @@ def get_next(
         )
         .first()
     )
-
     if not row:
-        return FastAPIResponse(status_code=204)  # No Content
+        return FastAPIResponse(status_code=204)
 
     att, tname = row
     return NextItemOut(
@@ -278,7 +236,6 @@ def get_next(
         intento_nro=att.intento_nro,
     )
 
-
 @router.get("/attempts/quota")
 def get_attempts_quota(
     survey_id: UUID = Query(...),
@@ -286,7 +243,6 @@ def get_attempts_quota(
     current=Depends(get_current_user),
 ):
     user_id = _extract_user_id(current)
-
     _expire_stale_attempts(db, survey_id, user_id)
 
     max_permitidos = _max_permitidos(db, survey_id, user_id)
@@ -304,7 +260,6 @@ def get_attempts_quota(
         "fallidos": fallidos,
         "restantes": restantes,
     }
-
 
 @router.get("/attempts", response_model=list[AttemptOut])
 def list_attempts(
@@ -332,35 +287,52 @@ def list_attempts(
 
 
 @router.post("/attempts", response_model=list[AttemptOut], status_code=201)
-def create_attempts(payload: AttemptsCreateIn, db: Session = Depends(get_db), current=Depends(get_current_user)):
+def create_attempts(
+    payload: AttemptsCreateIn,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user),
+    turno=Depends(require_turno_open),  # exige turno abierto
+    survey_id_q: Optional[UUID] = Query(None, description="(fallback) ID de encuesta si no viene en el body"),
+    x_survey_id: Optional[UUID] = Header(None, alias="X-Survey-Id"),
+):
+    # --- usuario / encuesta ---
     user_id = _extract_user_id(current)
+    survey_id: Optional[UUID] = payload.survey_id or survey_id_q or x_survey_id
+    if not survey_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta survey_id. Envíalo en el body como 'survey_id', o como query ?survey_id=, o header X-Survey-Id."
+        )
 
-    survey = db.query(Survey).filter(Survey.id == payload.survey_id, Survey.estado == "activa").first()
+    survey = db.query(Survey).filter(Survey.id == survey_id, Survey.estado == "activa").first()
     if not survey:
         raise HTTPException(status_code=404, detail="Encuesta no encontrada o inactiva")
 
-    # expira antes de contar
-    _expire_stale_attempts(db, survey_id=payload.survey_id, user_id=user_id)
+    # --- housekeeping ---
+    _expire_stale_attempts(db, survey_id=survey_id, user_id=user_id)
 
-    fails = _count_failures(db, survey_id=payload.survey_id, user_id=user_id)
-    max_permitidos = _max_permitidos(db, payload.survey_id, user_id)
+    fails = _count_failures(db, survey_id=survey_id, user_id=user_id)
+    max_permitidos = _max_permitidos(db, survey_id, user_id)
     if fails >= max_permitidos:
         raise HTTPException(status_code=403, detail="Límite de intentos fallidos alcanzado")
 
-    valid_teacher_ids = {
-        tid
-        for (tid,) in (
-            db.query(Teacher.id)
+    # Traemos los docentes válidos *para esa encuesta* y armamos un mapa id -> nombre
+    valid_teachers: dict[UUID, str] = {
+        tid: tnom
+        for (tid, tnom) in (
+            db.query(Teacher.id, Teacher.nombre)
             .join(SurveyTeacherAssignment, SurveyTeacherAssignment.teacher_id == Teacher.id)
             .filter(
-                SurveyTeacherAssignment.survey_id == payload.survey_id,
+                SurveyTeacherAssignment.survey_id == survey_id,
                 Teacher.estado == "activo",
             )
             .all()
         )
     }
+
+    # Validamos que todos los IDs recibidos pertenezcan a la encuesta
     for tid in payload.teacher_ids:
-        if tid not in valid_teacher_ids:
+        if tid not in valid_teachers:
             raise HTTPException(status_code=400, detail=f"Docente {tid} no pertenece a la encuesta")
 
     intento_nro = fails + 1
@@ -369,10 +341,11 @@ def create_attempts(payload: AttemptsCreateIn, db: Session = Depends(get_db), cu
 
     created: list[Attempt] = []
     for tid in payload.teacher_ids:
+        # Evitar duplicados ya enviados
         already_sent = (
             db.query(Attempt.id)
             .filter(
-                Attempt.survey_id == payload.survey_id,
+                Attempt.survey_id == survey_id,
                 Attempt.user_id == user_id,
                 Attempt.teacher_id == tid,
                 Attempt.estado == "enviado",
@@ -380,12 +353,18 @@ def create_attempts(payload: AttemptsCreateIn, db: Session = Depends(get_db), cu
             .first()
         )
         if already_sent:
-            raise HTTPException(status_code=409, detail=f"Docente {tid} ya fue evaluado por este usuario")
+            nombre_doc = valid_teachers.get(tid) or "Docente"
+            # 👉 ahora devolvemos el NOMBRE del docente
+            raise HTTPException(
+                status_code=409,
+                detail=f"Docente '{nombre_doc}' ya fue evaluado por este usuario"
+            )
 
+        # Reusar en_progreso vigente (si existe y no expiró)
         existing = (
             db.query(Attempt)
             .filter(
-                Attempt.survey_id == payload.survey_id,
+                Attempt.survey_id == survey_id,
                 Attempt.user_id == user_id,
                 Attempt.teacher_id == tid,
                 Attempt.estado == "en_progreso",
@@ -397,10 +376,11 @@ def create_attempts(payload: AttemptsCreateIn, db: Session = Depends(get_db), cu
             created.append(existing)
             continue
 
+        # Marcar como expirados los 'en_progreso' vencidos de ese docente
         stale = (
             db.query(Attempt)
             .filter(
-                Attempt.survey_id == payload.survey_id,
+                Attempt.survey_id == survey_id,
                 Attempt.user_id == user_id,
                 Attempt.teacher_id == tid,
                 Attempt.estado == "en_progreso",
@@ -411,13 +391,14 @@ def create_attempts(payload: AttemptsCreateIn, db: Session = Depends(get_db), cu
         )
         if stale:
             db.commit()
-            fails = _count_failures(db, payload.survey_id, user_id)
-            if fails >= _max_permitidos(db, payload.survey_id, user_id):
+            fails = _count_failures(db, survey_id, user_id)
+            if fails >= _max_permitidos(db, survey_id, user_id):
                 raise HTTPException(status_code=403, detail="Límite de intentos fallidos alcanzado")
             intento_nro = fails + 1
 
+        # Crear nuevo intento
         att = Attempt(
-            survey_id=payload.survey_id,
+            survey_id=survey_id,
             user_id=user_id,
             teacher_id=tid,
             intento_nro=intento_nro,
@@ -474,7 +455,6 @@ def patch_attempt(
         expires_at=att.expires_at,
     )
 
-
 @router.post("/attempts/{attempt_id}/submit", response_model=SubmitOut)
 def submit_attempt(
     attempt_id: UUID,
@@ -494,7 +474,6 @@ def submit_attempt(
         db.commit()
         raise HTTPException(status_code=409, detail="Attempt expirado (30 min)")
 
-    # Preguntas
     qs = db.query(Question).filter(Question.survey_id == att.survey_id).all()
     likert_qs = [q for q in qs if (q.tipo or "").lower() == "likert"]
     if len(likert_qs) != 15:
@@ -506,7 +485,6 @@ def submit_attempt(
     if missing:
         raise HTTPException(status_code=400, detail=f"Faltan respuestas a preguntas: {sorted(list(missing))}")
 
-    # Limpiar e insertar
     db.query(AttemptResponse).filter(AttemptResponse.attempt_id == att.id).delete(synchronize_session=False)
     for a in payload.answers:
         v = int(a.value)
@@ -514,12 +492,10 @@ def submit_attempt(
             raise HTTPException(status_code=400, detail=f"Valor inválido {a.value} en pregunta {a.question_id}")
         db.add(AttemptResponse(attempt_id=att.id, question_id=a.question_id, valor_likert=v))
 
-    # Q16 opcional
     q16 = next((q for q in qs if q.codigo == "Q16"), None)
     if q16 and payload.q16 and (payload.q16.positivos or payload.q16.mejorar or payload.q16.comentarios):
         db.add(AttemptResponse(attempt_id=att.id, question_id=q16.id, texto=payload.q16.model_dump()))
 
-    # Scoring
     pesos = {q.id: (q.peso or 1) for q in likert_qs}
     sum_w = sum(pesos.values())
     sum_wx = sum(int(a.value) * pesos[a.question_id] for a in payload.answers)
@@ -541,8 +517,10 @@ def submit_attempt(
     att.estado = "enviado"
     db.commit()
 
-    return SubmitOut(estado="enviado", scores={"total": total_score, "secciones": sec_scores})
+    # Si ya no hay intentos abiertos para esta encuesta/usuario => cerrar turno
+    _close_latest_open_turno_if_idle(db, user_id, att.survey_id)
 
+    return SubmitOut(estado="enviado", scores={"total": total_score, "secciones": sec_scores})
 
 @router.get("/attempts/{attempt_id}")
 def get_attempt(
@@ -567,7 +545,6 @@ def get_attempt(
         ],
     }
 
-
 @router.post("/attempts/admin/reset")
 def reset_attempts(
     survey_id: UUID,
@@ -583,7 +560,6 @@ def reset_attempts(
     db.commit()
     return {"ok": True}
 
-
 @router.get("/attempts/current")
 def get_current_attempt(
     survey_id: UUID = Query(...),
@@ -591,8 +567,6 @@ def get_current_attempt(
     current=Depends(get_current_user),
 ):
     user_id = _extract_user_id(current)
-
-    # Expira primero lo vencido
     _expire_stale_attempts(db, survey_id, user_id)
 
     now = datetime.now(timezone.utc)
@@ -604,11 +578,11 @@ def get_current_attempt(
             Attempt.estado == "en_progreso",
             or_(Attempt.expires_at.is_(None), Attempt.expires_at > now),
         )
-        .order_by(Attempt.id.asc().nullslast())  # el más antiguo vigente
+        .order_by(Attempt.id.asc().nullslast())
         .first()
     )
     if not att:
-        return {"status": "empty"}  # no hay nadie en progreso
+        return {"status": "empty"}
 
     teacher = db.query(Teacher).filter(Teacher.id == att.teacher_id).first()
     return {

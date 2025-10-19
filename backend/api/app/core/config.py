@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60
+    MAX_TURNOS: int = 3
 
     # CORS (puedes definir en Render: CORS_ORIGINS=https://encuesta-docente-f.vercel.app)
     CORS_ORIGINS: str = ""
