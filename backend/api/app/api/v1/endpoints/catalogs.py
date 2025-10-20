@@ -3,12 +3,10 @@ from uuid import UUID
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
-from sqlalchemy import text, or_
+from sqlalchemy import text
 
 from app.db.session import get_db
-from app.models.encuesta import Survey, SurveySection, Question
-from app.models.docente import Teacher, SurveyTeacherAssignment
-from app.schemas.teacher import TeacherOut
+from app.models.encuesta import Survey
 from app.core.security import get_current_user  # 👈 necesario para saber el usuario
 
 router = APIRouter(tags=["catalogs"])
@@ -38,7 +36,7 @@ def listar_encuestas_activas(
 
 @router.get("/surveys/{survey_id}/questions")
 def listar_preguntas(
-    survey_id: UUID,  # <-- aquí el cambio
+    survey_id: UUID,
     db: Session = Depends(get_db),
 ):
     sql = text("""
@@ -52,9 +50,10 @@ def listar_preguntas(
     rows = db.execute(sql, {"sid": str(survey_id)}).mappings().all()
     return rows
 
+
 @router.get("/surveys/by-codigo/{codigo}")
 def survey_by_codigo(codigo: str, db: Session = Depends(get_db)):
-    s = db.query(Survey).filter(Survey.codigo==codigo).first()
+    s = db.query(Survey).filter(Survey.codigo == codigo).first()
     if not s:
         raise HTTPException(404, "Encuesta no encontrada")
     return s
@@ -77,7 +76,7 @@ def listar_docentes_de_encuesta(
     - hide_evaluated=true  -> oculta docentes ya 'enviado' por el usuario actual.
     - include_state=true   -> agrega columna booleana 'evaluated' por fila.
     """
-    # (opcional) validar encuesta activa
+    # Validar encuesta activa (opcional pero recomendado)
     survey = db.query(Survey).filter(Survey.id == survey_id, Survey.estado == "activa").first()
     if not survey:
         raise HTTPException(status_code=404, detail="Encuesta no encontrada o inactiva")
@@ -85,27 +84,31 @@ def listar_docentes_de_encuesta(
     # id del usuario desde el token
     user_id = getattr(current, "id", None) or current.get("sub") or current.get("id")
 
-    # SELECT dinámico: añadimos 'evaluated' sólo si include_state = true
-    select_head = """
-        SELECT t.id, t.identificador, t.nombre, t.programa, t.estado
-    """
-    evaluated_expr = """
-        , EXISTS (
-            SELECT 1
+    # Construimos el SQL con CTE para no repetir subconsultas
+    # 'enviados' = docentes que ESTE usuario ya envió en ESTA encuesta.
+    # Luego hacemos LEFT JOIN y:
+    #   - si include_state=true, devolvemos (e.teacher_id IS NOT NULL) AS evaluated
+    #   - si hide_evaluated=true, filtramos e.teacher_id IS NULL
+    evaluated_col = ", (e.teacher_id IS NOT NULL) AS evaluated" if include_state else ""
+
+    base_sql = f"""
+        WITH enviados AS (
+            SELECT DISTINCT a.teacher_id
             FROM public.attempts a
             WHERE a.survey_id = :sid
               AND a.user_id   = :uid
-              AND a.teacher_id = t.id
-              AND a.estado = 'enviado'
-        ) AS evaluated
-    """
-    if include_state:
-        select_head += evaluated_expr
-
-    base_sql = f"""
-        {select_head}
+              AND a.estado    = 'enviado'
+        )
+        SELECT
+            t.id,
+            t.identificador,
+            t.nombre,
+            t.programa,
+            t.estado
+            {evaluated_col}
         FROM public.survey_teacher_assignments sta
         JOIN public.teachers t ON t.id = sta.teacher_id
+        LEFT JOIN enviados e ON e.teacher_id = t.id
         WHERE sta.survey_id = :sid
           AND (
             :q IS NULL OR
@@ -115,18 +118,8 @@ def listar_docentes_de_encuesta(
           )
     """
 
-    # Si hide_evaluated = true, filtramos con NOT EXISTS
     if hide_evaluated:
-        base_sql += """
-          AND NOT EXISTS (
-            SELECT 1
-            FROM public.attempts a2
-            WHERE a2.survey_id = :sid
-              AND a2.user_id   = :uid
-              AND a2.teacher_id = t.id
-              AND a2.estado = 'enviado'
-          )
-        """
+        base_sql += "  AND e.teacher_id IS NULL\n"
 
     base_sql += """
         ORDER BY t.nombre
@@ -143,14 +136,12 @@ def listar_docentes_de_encuesta(
 
     rows = db.execute(text(base_sql), params).mappings().all()
 
-    # Para mantener forma homogénea, si include_state=false añadimos evaluated=false
+    # Si include_state=false, no añadimos la columna evaluated.
+    # (No forzamos un 'evaluated=false' para no alterar el shape de la respuesta.)
     if not include_state:
-        out = []
-        for r in rows:
-            d = dict(r)
-            d.setdefault("evaluated", False)
-            out.append(d)
-        return out
+        # Limpiamos la clave si el motor la devuelve como None (no debería),
+        # o simplemente retornamos tal cual, porque el SELECT no la incluyó.
+        return rows
 
     return rows
 
@@ -171,7 +162,7 @@ def listar_docentes_por_codigo(
     if not survey:
         raise HTTPException(status_code=404, detail="Encuesta no encontrada")
 
-    # 2) Listar docentes asignados
+    # 2) Listar docentes asignados (sin evaluated porque depende del usuario)
     rows = db.execute(
         text("""
             SELECT t.id, t.identificador, t.nombre, t.programa, t.estado
