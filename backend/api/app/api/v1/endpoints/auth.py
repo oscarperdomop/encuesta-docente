@@ -68,3 +68,13 @@ def me(current_user: User = Depends(get_current_user)):
         nombre=current_user.nombre,
         roles=roles,
     )
+
+
+@router.post("/logout")
+def logout(current_user: User = Depends(get_current_user)):
+    """
+    Logout del usuario. En un sistema JWT stateless, el logout se maneja
+    en el frontend eliminando el token. Este endpoint solo valida que el
+    token sea válido antes de confirmar el logout.
+    """
+    return {"message": "Logout exitoso", "user_email": current_user.email}

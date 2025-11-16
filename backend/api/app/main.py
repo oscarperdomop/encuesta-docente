@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles
+from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles, admin_reports
 from app.api.v1.endpoints import queue as queue_ep
 
 from sqlalchemy import text
@@ -42,6 +42,7 @@ app.include_router(admin_surveys.router, prefix=API_V1_PREFIX)
 app.include_router(admin_imports.router,  prefix=f"{API_V1_PREFIX}/admin")
 app.include_router(admin_attempts.router, prefix=f"{API_V1_PREFIX}/admin")
 app.include_router(admin_roles.router,   prefix=f"{API_V1_PREFIX}/admin")
+app.include_router(admin_reports.router, prefix=f"{API_V1_PREFIX}/admin")
 
 # Rutas básicas fuera de /api/v1
 @app.get("/health")

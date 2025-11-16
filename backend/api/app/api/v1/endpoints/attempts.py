@@ -492,9 +492,27 @@ def submit_attempt(
             raise HTTPException(status_code=400, detail=f"Valor inválido {a.value} en pregunta {a.question_id}")
         db.add(AttemptResponse(attempt_id=att.id, question_id=a.question_id, valor_likert=v))
 
+    # Guardar Q16 (pregunta de texto/comentarios) si tiene contenido
     q16 = next((q for q in qs if q.codigo == "Q16"), None)
-    if q16 and payload.q16 and (payload.q16.positivos or payload.q16.mejorar or payload.q16.comentarios):
-        db.add(AttemptResponse(attempt_id=att.id, question_id=q16.id, texto=payload.q16.model_dump()))
+    
+    if q16 and payload.q16:
+        # Verificar si hay al menos un campo con contenido real (no vacío)
+        has_content = any([
+            (payload.q16.positivos or "").strip(),
+            (payload.q16.mejorar or "").strip(),
+            (payload.q16.comentarios or "").strip()
+        ])
+        
+        if has_content:
+            texto_data = payload.q16.model_dump(exclude_none=False)
+            response_obj = AttemptResponse(
+                attempt_id=att.id, 
+                question_id=q16.id, 
+                texto=texto_data
+            )
+            db.add(response_obj)
+            # Opcional: log de éxito para monitoreo
+            print(f"[INFO] Q16 guardado para attempt {att.id}")
 
     pesos = {q.id: (q.peso or 1) for q in likert_qs}
     sum_w = sum(pesos.values())
