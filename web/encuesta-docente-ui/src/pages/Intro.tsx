@@ -1,20 +1,11 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { me } from "@/services/auth";
 import USCOHeader from "@/components/USCOHeader";
+import { useAuthStore } from "@/state/authStore";
 
 export default function Intro() {
-  const [nombre, setNombre] = useState<string>("");
   const nav = useNavigate();
-
-  useEffect(() => {
-    me()
-      .then((u) => setNombre(u?.nombre || u?.email || "Usuario"))
-      .catch(() => {
-        localStorage.removeItem("token");
-        nav("/login", { replace: true });
-      });
-  }, [nav]);
+  const user = useAuthStore((state) => state.user);
+  const nombre = user?.nombre || user?.email || "Usuario";
 
   return (
     <div className="min-h-screen bg-[#f8f5ef] flex flex-col">

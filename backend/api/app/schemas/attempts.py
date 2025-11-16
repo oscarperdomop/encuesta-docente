@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel, Field, conint
+from pydantic import BaseModel, Field, conint, field_validator, model_validator
 
 
 # ---------- Entradas ----------
@@ -20,14 +20,26 @@ class SubmitAnswerIn(BaseModel):
 
 
 class Q16In(BaseModel):
-    positivos: Optional[str] = ""
-    mejorar: Optional[str] = ""
-    comentarios: Optional[str] = ""
+    positivos: Optional[str] = None
+    mejorar: Optional[str] = None
+    comentarios: Optional[str] = None
 
 
 class SubmitIn(BaseModel):
     answers: List[SubmitAnswerIn] = Field(min_items=15)
     q16: Optional[Q16In] = None
+    textos: Optional[Q16In] = None
+    
+    @model_validator(mode='after')
+    def normalize_q16_fields(self):
+        """Normaliza textos a q16 si q16 no está presente"""
+        if not self.q16 and self.textos:
+            self.q16 = self.textos
+        return self
+    
+    class Config:
+        # Permitir campos extra para compatibilidad
+        extra = 'allow'
 
 
 class AttemptPatchIn(BaseModel):

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import USCOPage from "@/components/USCOPage";
-import { me } from "@/services/auth";
+import { useAuthStore } from "@/state/authStore";
 import {
   getActiveSurveys,
   getSurveyTeachers,
@@ -14,20 +14,20 @@ import { useSelection } from "@/store/selection";
 
 export default function DocentesSelect() {
   const nav = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const userNombre = user?.nombre || user?.email || "Usuario";
 
   // Store de selección (id de encuesta + mapa de seleccionados)
   const { surveyId, setSurveyId, selected, toggle, clear } = useSelection();
 
   // UI state
-  const [userNombre, setUserNombre] = useState<string>("Usuario");
   const [loading, setLoading] = useState<boolean>(true);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [q, setQ] = useState<string>("");
 
-  // 1) Validar sesión y obtener nombre
+  // 1) Cargar encuesta activa y docentes
   useEffect(() => {
-    me()
-      .then((u) => setUserNombre(u?.nombre || u?.email || "Usuario"))
+    Promise.resolve()
       .catch(() => {
         localStorage.removeItem("token");
         nav("/login", { replace: true });

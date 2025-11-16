@@ -63,8 +63,10 @@ def decode_token(token: str) -> dict[str, Any]:
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     """
-    Devuelve el objeto User activo.
+    Devuelve el objeto User activo con sus roles cargados.
     """
+    from sqlalchemy.orm import selectinload
+    
     payload = decode_token(token)
     sub = payload.get("sub")
     if not sub:
@@ -76,9 +78,21 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except Exception:
         raise HTTPException(status_code=401, detail="Token con 'sub' inválido")
 
-    user = db.query(User).filter(User.id == user_id, User.estado == "activo").first()
+    user = (
+        db.query(User)
+        .options(selectinload(User.roles))
+        .filter(User.id == user_id, User.estado == "activo")
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+    
+    # Asegurar que los roles están cargados haciendo una copia de los nombres
+    # para evitar lazy loading fuera de la sesión
+    if hasattr(user, 'roles') and user.roles:
+        # Forzar la carga de roles accediendo a ellos dentro de la sesión
+        _ = [r.nombre for r in user.roles]
+    
     return user
 
 
@@ -89,6 +103,8 @@ def get_current_user_with_claims(
     """
     Igual que get_current_user pero retorna también los claims (para leer iat).
     """
+    from sqlalchemy.orm import selectinload
+    
     payload = decode_token(token)
     sub = payload.get("sub")
     if not sub:
@@ -99,38 +115,21 @@ def get_current_user_with_claims(
     except Exception:
         raise HTTPException(status_code=401, detail="Token con 'sub' inválido")
 
-    user = db.query(User).filter(User.id == user_id, User.estado == "activo").first()
+    user = (
+        db.query(User)
+        .options(selectinload(User.roles))
+        .filter(User.id == user_id, User.estado == "activo")
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+    
+    # Asegurar que los roles están cargados
+    if hasattr(user, 'roles') and user.roles:
+        _ = [r.nombre for r in user.roles]
+    
     return user, payload
 
-def get_admin_user(current: User = Depends(get_current_user)) -> User:
-    """
-    Permite la petición solo si el usuario es admin.
-    Soporta varias representaciones típicas del rol:
-    - user.roles como lista/JSON con "admin"
-    - user.roles como cadena "admin,..."
-    - user.rol == "admin"
-    - user.is_admin == True
-    """
-    roles: list[str] = []
-
-    # roles en lista/JSON
-    if hasattr(current, "roles") and current.roles:
-        if isinstance(current.roles, (list, tuple, set)):
-            roles = [str(r).lower() for r in current.roles]
-        elif isinstance(current.roles, str):
-            roles = [s.strip().lower() for s in current.roles.split(",")]
-
-    is_admin = (
-        "admin" in roles
-        or getattr(current, "rol", "").lower() == "admin"
-        or bool(getattr(current, "is_admin", False))
-    )
-
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Solo administradores")
-    return current
 
 def _roles_from_user(user: User) -> set[str]:
     names: set[str] = set()

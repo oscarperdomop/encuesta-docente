@@ -1,21 +1,12 @@
 // src/pages/Justificacion.tsx
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import USCOHeader from "@/components/USCOHeader";
-import { me } from "@/services/auth";
+import { useAuthStore } from "@/state/authStore";
 
 export default function Justificacion() {
-  const [nombre, setNombre] = useState<string>("");
   const nav = useNavigate();
-
-  useEffect(() => {
-    me()
-      .then((u) => setNombre(u?.nombre || u?.email || "Usuario"))
-      .catch(() => {
-        localStorage.removeItem("token");
-        nav("/login", { replace: true });
-      });
-  }, [nav]);
+  const user = useAuthStore((state) => state.user);
+  const nombre = user?.nombre || user?.email || "Usuario";
 
   return (
     <div className="min-h-screen bg-[#f8f5ef]">
