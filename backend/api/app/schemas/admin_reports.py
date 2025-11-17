@@ -3,6 +3,14 @@ from uuid import UUID
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field, ConfigDict
 
+# Estadísticas generales del sistema
+class StatsOverviewOut(BaseModel):
+    total_usuarios: int
+    total_encuestas: int
+    total_respuestas: int
+    tasa_completitud: float
+    encuestas_activas: int
+
 class SectionScore(BaseModel):
     section_id: UUID
     titulo: str
