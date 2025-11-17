@@ -7,6 +7,8 @@ from app.core.config import settings
 from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles, admin_reports
 from app.api.v1.endpoints import queue as queue_ep
 
+from app.db.session import check_db_connection
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
