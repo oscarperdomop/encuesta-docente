@@ -7,9 +7,8 @@ from app.core.config import settings
 from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles, admin_reports
 from app.api.v1.endpoints import queue as queue_ep
 
-from app.db.session import check_db_connection
+from app.db.session import check_db_connection, SessionLocal  # <- FIX
 
-# Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,6 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS (orígenes explícitos en prod)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_list,
@@ -30,36 +28,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ============================================
-# EVENTOS DE STARTUP Y SHUTDOWN
-# ============================================
-
 @app.on_event("startup")
 async def startup_event():
-    """Ejecuta al iniciar la aplicación"""
     logger.info(f"[APP] Starting {settings.APP_NAME}")
     logger.info(f"[APP] Environment: {settings.ENV}")
-    
-    # Verificar conexión a la base de datos
+
     if check_db_connection():
         logger.info("[APP] ✓ Database connection established")
     else:
         logger.error("[APP] ✗ Database connection failed")
 
-
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Ejecuta al cerrar la aplicación"""
     logger.info("[APP] Shutting down...")
-    engine.dispose()
-    logger.info("[APP] ✓ Database connections closed")
+    # No llames engine.dispose() si no importas engine
+    logger.info("[APP] ✓ Shutdown complete")
 
-
-# ============================================
-# ROUTERS
-# ============================================
-
+# Routers
 app.include_router(health.router,   prefix=API_V1_PREFIX)
 app.include_router(auth.router,     prefix=API_V1_PREFIX)
 app.include_router(catalogs.router, prefix=API_V1_PREFIX)
@@ -68,20 +53,13 @@ app.include_router(queue_ep.router, prefix=API_V1_PREFIX)
 app.include_router(sessions.router, prefix=API_V1_PREFIX)
 app.include_router(admin_surveys.router, prefix=API_V1_PREFIX)
 
-# Admin
 app.include_router(admin_imports.router,  prefix=f"{API_V1_PREFIX}/admin")
 app.include_router(admin_attempts.router, prefix=f"{API_V1_PREFIX}/admin")
-app.include_router(admin_roles.router,   prefix=f"{API_V1_PREFIX}/admin")
-app.include_router(admin_reports.router, prefix=f"{API_V1_PREFIX}/admin")
-
-
-# ============================================
-# ENDPOINTS
-# ============================================
+app.include_router(admin_roles.router,    prefix=f"{API_V1_PREFIX}/admin")
+app.include_router(admin_reports.router,  prefix=f"{API_V1_PREFIX}/admin")
 
 @app.get("/")
 def root():
-    """Endpoint raíz"""
     return {
         "message": "Bienvenido a la API de Encuestas Docentes",
         "version": "1.0.0",
@@ -89,23 +67,16 @@ def root():
         "api_v1": API_V1_PREFIX,
     }
 
-
 @app.get("/health")
 def health_root():
-    """Health check básico"""
     return {"status": "ok", "message": "API funcionando correctamente"}
-
 
 @app.get("/api/v1/health/db")
 def health_db():
-    """Health check de base de datos"""
     try:
         with SessionLocal() as session:
             session.execute(text("SELECT 1"))
         return {"status": "ok", "database": "connected"}
     except Exception as e:
         logger.error(f"[HEALTH] Database check failed: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail={"status": "error", "message": str(e)}
-        )
+        raise HTTPException(status_code=503, detail={"status": "error", "message": str(e)})
