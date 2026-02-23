@@ -419,6 +419,10 @@ La aplicación estará disponible en:
 
 ### Admin - Reportes (`/api/v1/admin/reports`)
 
+**Estadísticas Generales:**
+- `GET /reports/stats/overview` - **Estadísticas generales del sistema** (usuarios activos, encuestas, usuarios que completaron, tasa participación)
+
+**Reportes Detallados:**
 - `GET /reports/summary` - Resumen global de encuesta
 - `GET /reports/questions` - Listado de preguntas con estadísticas
 - `GET /reports/questions/{id}` - Detalle de pregunta

@@ -14,7 +14,7 @@ from app.api.deps.admin import require_admin
 from app.models.encuesta import Survey
 
 from app.schemas.admin_reports import (
-    SectionScore, SummaryOut, QuestionRowOut,
+    StatsOverviewOut, SectionScore, SummaryOut, QuestionRowOut,
     TeacherRowOut, TeacherQBreakdown, CommentRow,
     AttemptAnswerRow, QuestionTeacherDetailOut,
     QuestionGlobalOut, QuestionByTeacherRow, QuestionDetailOut,
@@ -27,6 +27,66 @@ from app.schemas.admin_reports import (
 
 import csv, io, json
 router = APIRouter(prefix="/reports", tags=["admin-reports"])
+
+
+@router.get("/stats/overview", response_model=StatsOverviewOut)
+def get_stats_overview(
+    db: Session = Depends(get_db),
+    _admin = Depends(require_admin),
+):
+    """
+    Estadísticas generales del sistema para el dashboard de administración.
+    
+    Returns:
+        - total_usuarios: Número total de usuarios activos en el sistema
+        - total_encuestas: Número total de encuestas en el sistema
+        - total_respuestas: Número de usuarios únicos que han completado al menos 1 encuesta
+        - tasa_completitud: Porcentaje de usuarios que completaron encuestas vs total usuarios activos
+        - encuestas_activas: Número de encuestas actualmente activas
+    """
+    from app.models.user import User
+    from app.models.attempt import Attempt
+    from app.models.attempt import Response as AttemptResponse
+    
+    # 1. Total usuarios activos
+    total_usuarios = (
+        db.query(User)
+        .filter(User.estado == "activo")
+        .count()
+    )
+    
+    # 2. Total encuestas
+    total_encuestas = db.query(Survey).count()
+    
+    # 3. Total respuestas = usuarios únicos que han completado al menos 1 encuesta
+    from sqlalchemy import distinct
+    total_respuestas = (
+        db.query(distinct(Attempt.user_id))
+        .filter(Attempt.estado == "enviado")
+        .count()
+    )
+    
+    # 4. Tasa de completitud = (usuarios que completaron / total usuarios activos) * 100
+    usuarios_que_completaron = total_respuestas  # Ya calculado arriba
+    
+    tasa_completitud = (
+        (usuarios_que_completaron / total_usuarios * 100) if total_usuarios > 0 else 0.0
+    )
+    
+    # 5. Encuestas activas
+    encuestas_activas = (
+        db.query(Survey)
+        .filter(Survey.estado == "activa")
+        .count()
+    )
+    
+    return StatsOverviewOut(
+        total_usuarios=total_usuarios,
+        total_encuestas=total_encuestas,
+        total_respuestas=total_respuestas,
+        tasa_completitud=round(tasa_completitud, 2),
+        encuestas_activas=encuestas_activas
+    )
 
 def _ensure_survey(db: Session, survey_id: UUID):
     s = db.query(Survey).filter(Survey.id == survey_id).first()
