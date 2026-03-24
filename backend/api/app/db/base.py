@@ -6,6 +6,10 @@ from app.db.base_class import Base  # <- la Base que acabamos de crear
 from app.models import user  # noqa: F401
 from app.models import docente  # noqa: F401
 from app.models import encuesta  # noqa: F401
+from app.models import attempt  # noqa: F401
+from app.models import attempt_limit  # noqa: F401
+from app.models import turno  # noqa: F401
+from app.models import audit  # noqa: F401
 
 # Opcionalmente, si quieres exponer clases, puedes importar así:
 # from app.models.user import User, Role  # noqa: F401

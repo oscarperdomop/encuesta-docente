@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import get_current_user
+from app.core.security import get_current_user, user_can_take_surveys
 from app.db.session import get_db
 from app.models.turno import Turno
 from app.models.attempt import Attempt
@@ -139,6 +139,12 @@ def open_turno(
     Abre un turno para el usuario autenticado respetando el tope MAX_TURNOS.
     - Si ya hay un turno 'open', lo reutiliza (idempotente).
     """
+    if not user_can_take_surveys(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Tu rol es observador y no esta habilitado para iniciar pruebas.",
+        )
+
     existing = _get_open_turno(db, user.id)
     if existing:
         used = db.query(func.count(Turno.id)).filter(Turno.user_id == user.id).scalar() or 0
@@ -194,6 +200,12 @@ def require_turno_open(
     db: Session = Depends(get_db),
     user = Depends(get_current_user),
 ) -> Turno:
+    if not user_can_take_surveys(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Tu rol es observador y no esta habilitado para iniciar pruebas.",
+        )
+
     if not x_turno_id:
         raise HTTPException(status_code=403, detail="Turno no iniciado (falta X-Turno-Id).")
     t = db.query(Turno).filter(

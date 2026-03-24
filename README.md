@@ -399,13 +399,19 @@ La aplicación estará disponible en:
 
 ### Admin - Importaciones (`/api/v1/admin/imports`)
 
-- `POST /imports/teachers` - Importar docentes desde CSV
-- `POST /imports/users` - Importar usuarios desde CSV
+- `GET /imports/teachers/template.csv` - Descargar plantilla CSV de docentes
+- `POST /imports/teachers` - Importar docentes desde CSV (opcionalmente asignarlos a una encuesta activa con `survey_id`)
+- `GET /imports/users/template.csv` - Descargar plantilla CSV de usuarios
+- `POST /imports/users` - Importar usuarios desde CSV (`email`, `rol` requeridos; `nombre`, `estado` opcionales). Soporta `dry_run` y `replace_roles`
 
 ### Admin - Roles (`/api/v1/admin/roles`)
 
 - `POST /roles/grant` - Asignar rol a usuario
 - `DELETE /roles/revoke` - Revocar rol de usuario
+
+### Admin - Usuarios (`/api/v1/admin`)
+
+- `GET /usuarios` - Listar usuarios con paginación y búsqueda (`search`, `rol`, `estado`, `page`, `per_page`)
 
 ### Admin - Intentos (`/api/v1/admin/attempts`)
 

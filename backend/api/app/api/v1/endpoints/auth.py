@@ -2,8 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
-from app.core.security import create_access_token, get_current_user
+from app.core.security import create_access_token, get_current_user, user_can_take_surveys
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
@@ -29,28 +30,31 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
 
     user = (
         db.query(User)
+        .options(selectinload(User.roles))
         .filter(User.email == email, User.estado == "activo")
         .first()
     )
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
 
-    # Conteo de turnos CERRADOS (consumidos)
-    closed_count = (
-        db.query(func.count(Turno.id))
-        .filter(Turno.user_id == user.id, Turno.status == "closed")
-        .scalar()
-    ) or 0
+    # Observadores: pueden entrar al sistema, pero no iniciar pruebas.
+    # Por eso no aplicamos bloqueo por turnos a quienes no encuestan.
+    if user_can_take_surveys(user):
+        closed_count = (
+            db.query(func.count(Turno.id))
+            .filter(Turno.user_id == user.id, Turno.status == "closed")
+            .scalar()
+        ) or 0
 
-    if closed_count >= MAX_TURNOS:
-        # Bloquea el login: no emitir token
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Ya no tienes turnos para responder la encuesta, "
-                "contacta con el administrador de la encuesta."
-            ),
-        )
+        if closed_count >= MAX_TURNOS:
+            # Bloquea el login: no emitir token para actores encuestadores sin cupo.
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Ya no tienes turnos para responder la encuesta, "
+                    "contacta con el administrador de la encuesta."
+                ),
+            )
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     return TokenOut(access_token=token)

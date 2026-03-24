@@ -13,6 +13,7 @@ from app.core.security import (
     get_current_user,
     get_current_user_with_claims,  # si lo usas en otros lados
     get_admin_user,
+    user_can_take_surveys,
 )
 from app.db.session import get_db
 from app.api.v1.endpoints.sessions import require_turno_open  # exige turno abierto
@@ -297,6 +298,12 @@ def create_attempts(
 ):
     # --- usuario / encuesta ---
     user_id = _extract_user_id(current)
+    if not user_can_take_surveys(current):
+        raise HTTPException(
+            status_code=403,
+            detail="Tu rol es observador y no esta habilitado para iniciar pruebas.",
+        )
+
     survey_id: Optional[UUID] = payload.survey_id or survey_id_q or x_survey_id
     if not survey_id:
         raise HTTPException(
