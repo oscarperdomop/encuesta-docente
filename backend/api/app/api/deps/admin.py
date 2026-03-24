@@ -1,20 +1,17 @@
 # api/app/api/deps/admin.py
-from fastapi import Depends, HTTPException
-from app.core.security import get_current_user
+from fastapi import Depends, HTTPException, status
 
-def require_admin(user = Depends(get_current_user)):
-    """
-    Acepta user como objeto o dict. Requiere 'admin' o 'superadmin' en roles.
-    """
-    roles = set()
-    if hasattr(user, "roles"):
-        roles = {getattr(r, "nombre", r) for r in (getattr(user, "roles", []) or [])}
-    else:
-        try:
-            roles = set((user or {}).get("roles") or [])
-        except Exception:
-            roles = set()
+from app.core.security import get_current_user_with_claims, user_is_admin
 
-    if not ({"admin", "superadmin"} & roles):
-        raise HTTPException(status_code=403, detail="Solo administradores")
+def require_admin(dep=Depends(get_current_user_with_claims)):
+    """
+    Requiere rol administrador usando la misma lÃ³gica central de seguridad.
+    Mantiene consistencia con get_admin_user para evitar reglas divergentes.
+    """
+    user, claims = dep
+    if not user_is_admin(user, claims):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo administradores",
+        )
     return user

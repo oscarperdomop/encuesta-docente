@@ -4,7 +4,7 @@ from sqlalchemy import text
 import logging
 
 from app.core.config import settings
-from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles, admin_reports
+from app.api.v1.endpoints import health, auth, catalogs, attempts, sessions, admin_attempts, admin_surveys, admin_imports, admin_roles, admin_reports, admin_users
 from app.api.v1.endpoints import queue as queue_ep
 
 from app.db.session import check_db_connection, SessionLocal  # <- FIX
@@ -55,8 +55,21 @@ app.include_router(admin_surveys.router, prefix=API_V1_PREFIX)
 
 app.include_router(admin_imports.router,  prefix=f"{API_V1_PREFIX}/admin")
 app.include_router(admin_attempts.router, prefix=f"{API_V1_PREFIX}/admin")
-app.include_router(admin_roles.router,    prefix=f"{API_V1_PREFIX}/admin")
-app.include_router(admin_reports.router,  prefix=f"{API_V1_PREFIX}/admin")
+app.include_router(admin_roles.router,   prefix=f"{API_V1_PREFIX}/admin")
+app.include_router(admin_reports.router, prefix=f"{API_V1_PREFIX}/admin")
+app.include_router(admin_users.router,   prefix=f"{API_V1_PREFIX}/admin")
+
+# Rutas básicas fuera de /api/v1
+@app.get("/health")
+def health_root():
+    return {"status": "ok", "message": "API funcionando correctamente"}
+# health rápido de DB
+
+@app.get("/api/v1/health/db")
+def health_db():
+    with SessionLocal() as s:
+        s.execute(text("SELECT 1"))
+    return {"db": "ok"}
 
 @app.get("/")
 def root():

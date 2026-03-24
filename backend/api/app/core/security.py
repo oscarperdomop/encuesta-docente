@@ -17,6 +17,21 @@ from app.models.user import User
 # Solo para docs/Swagger; no ejecuta nada por sí mismo
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 ADMIN_ROLE_NAMES = {"Administrador", "Admin", "admin", "administrator"}
+EVALUATOR_ROLE_NAMES_LOWER = {
+    # roles canónicos
+    "encuestador estudiante",
+    "encuestador docente",
+    "jefe de programa",
+    # variantes históricas
+    "enc_estudiante",
+    "enc_docente",
+    "enc_jefe_programa",
+    # administradores también pueden encuestar
+    "administrador",
+    "admin",
+    "administrator",
+    "superadmin",
+}
 
 
 def create_access_token(subject: dict[str, Any], expires_minutes: int | None = None) -> str:
@@ -161,6 +176,18 @@ def user_is_admin(user: User, claims: dict | None = None) -> bool:
         bool(ADMIN_ROLE_NAMES & names) or
         any(n in {"administrador","admin","administrator"} for n in lower)
     )
+
+
+def user_can_take_surveys(user: User, claims: dict | None = None) -> bool:
+    """
+    True si el usuario tiene un rol habilitado para iniciar pruebas/encuestas.
+    Los observadores pueden autenticarse pero NO abrir turnos ni crear intents.
+    """
+    names = set()
+    names |= _roles_from_user(user)
+    names |= _roles_from_claims(claims)
+    lower = {n.lower() for n in names}
+    return any(n in EVALUATOR_ROLE_NAMES_LOWER for n in lower)
 
 def get_admin_user(dep=Depends(get_current_user_with_claims)) -> User:
     user, claims = dep  # get_current_user_with_claims devuelve (user, claims)
